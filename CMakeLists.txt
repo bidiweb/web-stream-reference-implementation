@@ -1,0 +1,219 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+cmake_minimum_required(VERSION 3.14)
+project(wish_cpp)
+
+
+option(WISH_BUILD_TESTS "Build wish unit tests" ON)
+option(WISH_BUILD_EXAMPLES "Build wish examples" ON)
+
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+include(FetchContent)
+
+# Exclude tests, benchmarks, sample files, etc. from dependencies.
+# Set before any MakeAvailable so no dep accidentally enables testing.
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+
+
+set(ABSL_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(ABSL_PROPAGATE_CXX_STD ON)
+
+# Static-build abseil in order to use WHOLE_ARCHIVE to force linking of log_flags static initializer
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    abseil
+    GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+    GIT_TAG        255c84dadd029fd8ad25c5efb5933e47beaa00c7 # 20260107.1
+)
+FetchContent_MakeAvailable(abseil)
+
+unset(BUILD_SHARED_LIBS CACHE)
+
+
+set(WSLAY_TESTS OFF CACHE BOOL "" FORCE)
+set(WSLAY_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    wslay
+    GIT_REPOSITORY https://github.com/tatsuhiro-t/wslay.git
+    GIT_TAG        0e7d106ff89ad6638090fd811a9b2e4c5dda8d40
+    PATCH_COMMAND  git apply --reverse --check ${CMAKE_CURRENT_SOURCE_DIR}/patches/wslay.patch || git apply ${CMAKE_CURRENT_SOURCE_DIR}/patches/wslay.patch
+)
+
+
+# Disable OpenSSL and Mbed TLS. We use BoringSSL instead.
+set(EVENT__DISABLE_OPENSSL ON CACHE BOOL "" FORCE)
+set(EVENT__DISABLE_MBEDTLS ON CACHE BOOL "" FORCE)
+
+# Build libevent as a static library so executables are self-contained.
+set(EVENT__LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
+
+set(EVENT__DISABLE_BENCHMARKS ON CACHE BOOL "" FORCE)
+set(EVENT__DISABLE_TESTS ON CACHE BOOL "" FORCE)
+set(EVENT__DISABLE_REGRESS ON CACHE BOOL "" FORCE)
+set(EVENT__DISABLE_SAMPLES ON CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    libevent
+    GIT_REPOSITORY https://github.com/libevent/libevent.git
+    GIT_TAG        780acfe8b2495949f0dc3ebd6f18eea2dec605a6
+)
+
+
+FetchContent_Declare(
+    boringssl
+    GIT_REPOSITORY https://boringssl.googlesource.com/boringssl
+    GIT_TAG        0.20260211.0
+)
+
+
+FetchContent_Declare(
+    picohttpparser
+    GIT_REPOSITORY https://github.com/h2o/picohttpparser.git
+    GIT_TAG        539bb9f510f5aefc8efda53aaf822a21ecae2832 # v1.2
+)
+
+
+# These variables are unprefixed, so MakeAvailable is called immediately and
+# they are unset afterwards to avoid leaking into other dependencies.
+
+set(ENABLE_FAILMALLOC       OFF CACHE BOOL "" FORCE)
+
+# Since BUILD_SHARED_LIBS=OFF, we need to explicitly enable the static target (nghttp2_static)
+set(BUILD_SHARED_LIBS       OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC_LIBS       ON  CACHE BOOL "" FORCE)
+
+# nghttp2: build only the core library (no TLS apps, no examples).
+set(ENABLE_LIB_ONLY         ON  CACHE BOOL "" FORCE)
+
+set(ENABLE_DOC              OFF CACHE BOOL "" FORCE)
+
+set(WITH_LIBXML2            OFF CACHE BOOL "" FORCE)
+set(WITH_JEMALLOC           OFF CACHE BOOL "" FORCE)
+set(WITH_MRUBY              OFF CACHE BOOL "" FORCE)
+set(WITH_NEVERBLEED         OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    nghttp2
+    GIT_REPOSITORY https://github.com/nghttp2/nghttp2.git
+    GIT_TAG        68cb6900fde14c77f0cd7add0e094a862960eb99 # v1.69.0
+)
+FetchContent_MakeAvailable(nghttp2)
+
+# Reset the cached variables to avoid affecting other dependencies. They are not prefixed.
+foreach(_var IN ITEMS
+        ENABLE_LIB_ONLY
+        ENABLE_DOC
+        ENABLE_FAILMALLOC
+        BUILD_SHARED_LIBS
+        BUILD_STATIC_LIBS
+        WITH_LIBXML2
+        WITH_JEMALLOC
+        WITH_MRUBY
+        WITH_NEVERBLEED)
+    unset(${_var} CACHE)
+endforeach()
+
+
+if(WISH_BUILD_TESTS)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG        52eb8108c5bdec04579160ae17225d66034bd723 # v1.17.0
+    )
+    FetchContent_MakeAvailable(googletest)
+endif()
+
+
+FetchContent_MakeAvailable(wslay libevent boringssl picohttpparser)
+
+include_directories(${wslay_SOURCE_DIR}/lib/includes)
+include_directories(${libevent_SOURCE_DIR}/include)
+include_directories(${libevent_BINARY_DIR}/include)
+include_directories(${boringssl_SOURCE_DIR}/include)
+include_directories(${nghttp2_SOURCE_DIR}/lib/includes)
+include_directories(${nghttp2_BINARY_DIR}/lib/includes)
+include_directories(${picohttpparser_SOURCE_DIR})
+include_directories(src)
+
+add_library(http1_handshake STATIC
+    src/handshake.h
+    src/handshake.cc
+    ${picohttpparser_SOURCE_DIR}/picohttpparser.c
+    ${picohttpparser_SOURCE_DIR}/picohttpparser.h
+)
+target_link_libraries(http1_handshake event absl::strings absl::log)
+
+# We will compile libevent's bufferevent_openssl.c inside our library
+# since we disabled it in libevent's own build.
+# Build as a static library: libevent is also static and was not compiled with
+# -fPIC, so it cannot be linked into a shared object.
+add_library(web_stream STATIC
+    src/web_stream.h
+    src/buffer_event_web_stream.cc
+    src/buffer_event_web_stream.h
+    ${libevent_SOURCE_DIR}/bufferevent_openssl.c
+    ${libevent_SOURCE_DIR}/bufferevent_ssl.c
+    src/plain_server.cc
+    src/plain_server.h
+    src/plain_client.cc
+    src/plain_client.h
+    src/tls_context.cc
+    src/tls_context.h
+    src/tls_server.cc
+    src/tls_server.h
+    src/tls_client.cc
+    src/tls_client.h
+    src/nghttp2_web_stream.cc
+    src/nghttp2_web_stream.h
+    src/h2_server.cc
+    src/h2_server.h
+    src/h2_client.cc
+    src/h2_client.h
+    src/h2_tls_server.cc
+    src/h2_tls_server.h
+    src/h2_tls_client.cc
+    src/h2_tls_client.h
+)
+# BoringSSL targets: ssl and crypto.  nghttp2 for HTTP/2 framing.
+target_link_libraries(web_stream http1_handshake wslay event ssl crypto nghttp2_static absl::strings absl::log)
+target_compile_definitions(web_stream PUBLIC EVENT__HAVE_OPENSSL=1)
+
+
+if(WISH_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+
+if(WISH_BUILD_TESTS)
+    enable_testing()
+
+    add_executable(buffer_event_web_stream_test src/buffer_event_web_stream_test.cc)
+    target_link_libraries(buffer_event_web_stream_test web_stream gtest_main gtest)
+    add_test(NAME buffer_event_web_stream_test COMMAND buffer_event_web_stream_test)
+
+    add_executable(nghttp2_web_stream_test src/nghttp2_web_stream_test.cc)
+    target_link_libraries(nghttp2_web_stream_test web_stream gtest_main gtest)
+    add_test(NAME nghttp2_web_stream_test COMMAND nghttp2_web_stream_test)
+
+    add_executable(handshake_test src/handshake_test.cc)
+    target_link_libraries(handshake_test http1_handshake gtest_main gtest event)
+    add_test(NAME handshake_test COMMAND handshake_test)
+endif()
