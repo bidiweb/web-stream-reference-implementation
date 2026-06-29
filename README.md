@@ -1,6 +1,6 @@
 # web-stream reference implementation
 
-This repository contains a reference implementation of the `web-stream` codec (over HTTP/1.1 chunked or HTTP/2 DATA framing), satisfying the WiSH specifications in https://github.com/bidiweb/wish (`draft-yoshino-wish`).
+This repository contains a reference implementation of the `web-stream` codec (over HTTP/1.1 chunked or HTTP/2 DATA framing), satisfying the `web-stream` specifications in https://github.com/bidiweb/wish (`draft-yoshino-wish`).
 
 For a detailed walkthrough of the individual files, classes, and structural organization of this project, please consult the [CODE_MAP.md](CODE_MAP.md) directory guide.
 
